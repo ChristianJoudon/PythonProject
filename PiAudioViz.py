@@ -9,6 +9,7 @@ import subprocess
 import threading
 import queue
 import pyaudio
+import wave
 import time
 
 class AudioVisualizer:
@@ -74,30 +75,27 @@ class AudioVisualizer:
                 query_params[param] = [default_value]
         input_srt_with_params = urlunparse(url_parts._replace(query=urlencode(query_params, doseq=True)))
 
-        # FFmpeg commands for playback and saving
-        ffmpeg_command_playback = f'ffmpeg -i "{input_srt_with_params}" -c:a pcm_s16le -f s16le pipe:1'
-        ffmpeg_command_save = f'ffmpeg -i "{input_srt_with_params}" -c:a pcm_s16le "{output_file}" -y'
+        # FFmpeg command for streaming
+        ffmpeg_command = f'ffmpeg -i "{input_srt_with_params}" -c:a pcm_s16le -f s16le pipe:1'
 
         try:
-            # Start FFmpeg process for playback
-            process_playback = subprocess.Popen(
-                ffmpeg_command_playback,
+            # Start the FFmpeg process to read raw PCM audio
+            process = subprocess.Popen(
+                ffmpeg_command,
                 shell=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 bufsize=10 ** 8
             )
 
-            # Start FFmpeg process for saving (if save_audio is True)
+            # Open file for saving the raw audio
             if save_audio:
-                save_process = subprocess.Popen(
-                    ffmpeg_command_save,
-                    shell=True,
-                    stdout=subprocess.DEVNULL,  # No need to read output for saving
-                    stderr=subprocess.PIPE
-                )
+                wav_file = wave.open(output_file, 'wb')
+                wav_file.setnchannels(1)
+                wav_file.setsampwidth(2)  # 16-bit audio = 2 bytes
+                wav_file.setframerate(44100)
 
-            # Initialize PyAudio for playback
+            # Setup PyAudio for playback
             if playback:
                 p = pyaudio.PyAudio()
                 stream = p.open(
@@ -115,23 +113,21 @@ class AudioVisualizer:
                         break
                     print(f"FFmpeg stderr: {line.decode('utf-8')}", end='')
 
-            # Start a thread to monitor FFmpeg's stderr (playback process)
-            stderr_thread_playback = threading.Thread(target=read_ffmpeg_stderr, args=(process_playback.stderr,))
-            stderr_thread_playback.daemon = True
-            stderr_thread_playback.start()
-
-            if save_audio:
-                # Start a thread to monitor FFmpeg's stderr (save process)
-                stderr_thread_save = threading.Thread(target=read_ffmpeg_stderr, args=(save_process.stderr,))
-                stderr_thread_save.daemon = True
-                stderr_thread_save.start()
+            # Start a thread to monitor FFmpeg's stderr
+            stderr_thread = threading.Thread(target=read_ffmpeg_stderr, args=(process.stderr,))
+            stderr_thread.daemon = True
+            stderr_thread.start()
 
             while self.running:
-                # Read audio data from playback FFmpeg's stdout
-                raw_audio = process_playback.stdout.read(self.FFT_WINDOW_SIZE * 2)  # 16-bit PCM, 2 bytes per sample
+                # Read a chunk of audio data from the FFmpeg process
+                raw_audio = process.stdout.read(self.FFT_WINDOW_SIZE * 2)  # 16-bit PCM, 2 bytes per sample
                 if not raw_audio:
                     print("No audio data received. Exiting.")
                     break
+
+                # Save audio
+                if save_audio:
+                    wav_file.writeframes(raw_audio)
 
                 # Playback audio
                 if playback:
@@ -140,8 +136,10 @@ class AudioVisualizer:
                 # Process audio for visualization
                 if visualize:
                     try:
+                        # Convert raw byte data to a NumPy array for visualization
                         audio_data = np.frombuffer(raw_audio, dtype=np.int16).astype(np.float32) / np.iinfo(
                             np.int16).max
+                        # Pass it to the audio callback
                         self.audio_callback(audio_data.reshape(-1, 1), len(audio_data), None, None)
                         if self.show_waveform:
                             self.update_waveform_plot()
@@ -155,9 +153,9 @@ class AudioVisualizer:
                     except Exception as e:
                         print(f"Error processing visualization: {e}")
 
-            process_playback.stdout.close()
-            process_playback.stderr.close()
-            process_playback.wait()
+            process.stdout.close()
+            process.stderr.close()
+            process.wait()
 
             if playback:
                 stream.stop_stream()
@@ -165,26 +163,27 @@ class AudioVisualizer:
                 p.terminate()
 
             if save_audio:
-                save_process.wait()
+                wav_file.close()
 
         except KeyboardInterrupt:
             print("Interrupted by user. Stopping...")
-            process_playback.terminate()
+            process.terminate()
             if save_audio:
-                save_process.terminate()
+                wav_file.close()
             if playback:
                 stream.stop_stream()
                 stream.close()
                 p.terminate()
         except Exception as e:
             print(f"Error during SRT stream: {e}")
-            process_playback.terminate()
+            process.terminate()
             if save_audio:
-                save_process.terminate()
+                wav_file.close()
             if playback:
                 stream.stop_stream()
                 stream.close()
                 p.terminate()
+
 
     def setup_plots(self):
         """
