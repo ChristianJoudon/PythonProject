@@ -4,9 +4,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 import sounddevice as sd
 from collections import deque
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 import subprocess
 import threading
 import queue
+import pyaudio
 import time
 
 class AudioVisualizer:
@@ -51,63 +53,138 @@ class AudioVisualizer:
         # Sample counter for generating continuous timestamps
         self.sample_counter = 0  # Initialize sample counter
 
-    def stream_and_save_srt(self, input_srt, output_file):
+    def stream_and_save_srt(self, input_srt, output_file, save_audio=True, visualize=True, playback=True):
         """
-        Stream SRT audio while simultaneously saving to a file and updating visualizations.
+        Stream SRT audio, save to a file, play through speakers, and visualize audio.
 
         Parameters:
-        - input_srt (str): The SRT stream URL (e.g., 'srt://192.168.1.157:5000?mode=caller').
-        - output_file (str): Path to the file where audio will be saved.
+        - input_srt (str): The SRT stream URL (e.g., 'srt://128.171.120.197:8000?mode=caller').
+        - output_file (str): Path to save the audio file.
+        - save_audio (bool): Whether to save the audio to a file.
+        - visualize (bool): Whether to visualize the audio stream.
+        - playback (bool): Whether to play the audio through speakers.
         """
-        # FFmpeg command to output raw audio data
-        ffmpeg_command = [
-            "ffmpeg",
-            "-i", input_srt,
-            "-map", "0:a",
-            "-c:a", "pcm_f32le",  # Convert audio to 32-bit float little endian
-            "-f", "f32le",        # Output format: 32-bit floating point little endian
-            "-ac", "1",           # Mono audio
-            "-ar", str(self.sample_rate),  # Set sample rate
-            "-",                  # Output to stdout
-            "-y",                 # Overwrite output files without asking
-            output_file           # Save to file
-        ]
+
+        # Parse and update the SRT URL with required parameters
+        url_parts = urlparse(input_srt)
+        query_params = parse_qs(url_parts.query)
+        required_params = {'latency': '5000', 'pkt_size': '1316', 'buffer_size': '100000'}
+        for param, default_value in required_params.items():
+            if param not in query_params:
+                query_params[param] = [default_value]
+        input_srt_with_params = urlunparse(url_parts._replace(query=urlencode(query_params, doseq=True)))
+
+        # FFmpeg commands for playback and saving
+        ffmpeg_command_playback = f'ffmpeg -i "{input_srt_with_params}" -c:a pcm_s16le -f s16le pipe:1'
+        ffmpeg_command_save = f'ffmpeg -i "{input_srt_with_params}" -c:a pcm_s16le "{output_file}" -y'
 
         try:
-            process = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE, bufsize=10**8)
-            print("Streaming and saving started. Press Ctrl+C to stop.")
+            # Start FFmpeg process for playback
+            process_playback = subprocess.Popen(
+                ffmpeg_command_playback,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=10 ** 8
+            )
+
+            # Start FFmpeg process for saving (if save_audio is True)
+            if save_audio:
+                save_process = subprocess.Popen(
+                    ffmpeg_command_save,
+                    shell=True,
+                    stdout=subprocess.DEVNULL,  # No need to read output for saving
+                    stderr=subprocess.PIPE
+                )
+
+            # Initialize PyAudio for playback
+            if playback:
+                p = pyaudio.PyAudio()
+                stream = p.open(
+                    format=pyaudio.paInt16,
+                    channels=1,
+                    rate=44100,  # Set this to the SRT stream's sample rate
+                    output=True
+                )
+
+            def read_ffmpeg_stderr(pipe):
+                """Log FFmpeg stderr."""
+                while True:
+                    line = pipe.readline()
+                    if not line:
+                        break
+                    print(f"FFmpeg stderr: {line.decode('utf-8')}", end='')
+
+            # Start a thread to monitor FFmpeg's stderr (playback process)
+            stderr_thread_playback = threading.Thread(target=read_ffmpeg_stderr, args=(process_playback.stderr,))
+            stderr_thread_playback.daemon = True
+            stderr_thread_playback.start()
+
+            if save_audio:
+                # Start a thread to monitor FFmpeg's stderr (save process)
+                stderr_thread_save = threading.Thread(target=read_ffmpeg_stderr, args=(save_process.stderr,))
+                stderr_thread_save.daemon = True
+                stderr_thread_save.start()
 
             while self.running:
-                # Read raw audio data from FFmpeg's stdout
-                raw_audio = process.stdout.read(self.FFT_WINDOW_SIZE * 4)  # 4 bytes per float32 sample
+                # Read audio data from playback FFmpeg's stdout
+                raw_audio = process_playback.stdout.read(self.FFT_WINDOW_SIZE * 2)  # 16-bit PCM, 2 bytes per sample
                 if not raw_audio:
+                    print("No audio data received. Exiting.")
                     break
-                audio_data = np.frombuffer(raw_audio, dtype=np.float32)
-                if len(audio_data) == 0:
-                    continue
 
-                # Simulate an audio callback
-                self.audio_callback(audio_data.reshape(-1, 1), len(audio_data), None, None)
+                # Playback audio
+                if playback:
+                    stream.write(raw_audio)
 
-                # Update visualizations
-                if self.show_waveform:
-                    self.update_waveform_plot()
-                if self.show_fft:
-                    self.update_fft_plot()
-                if self.show_spectrogram:
-                    self.update_spectrogram()
+                # Process audio for visualization
+                if visualize:
+                    try:
+                        audio_data = np.frombuffer(raw_audio, dtype=np.int16).astype(np.float32) / np.iinfo(
+                            np.int16).max
+                        self.audio_callback(audio_data.reshape(-1, 1), len(audio_data), None, None)
+                        if self.show_waveform:
+                            self.update_waveform_plot()
+                        if self.show_fft:
+                            self.update_fft_plot()
+                        if self.show_spectrogram:
+                            self.update_spectrogram()
 
-                self.fig.canvas.draw_idle()
-                self.fig.canvas.flush_events()
-                plt.pause(0.001)
+                        self.fig.canvas.draw_idle()
+                        self.fig.canvas.flush_events()
+                    except Exception as e:
+                        print(f"Error processing visualization: {e}")
+
+            process_playback.stdout.close()
+            process_playback.stderr.close()
+            process_playback.wait()
+
+            if playback:
+                stream.stop_stream()
+                stream.close()
+                p.terminate()
+
+            if save_audio:
+                save_process.wait()
+
         except KeyboardInterrupt:
-            print("Stopping stream...")
-            process.terminate()
-            process.wait()
+            print("Interrupted by user. Stopping...")
+            process_playback.terminate()
+            if save_audio:
+                save_process.terminate()
+            if playback:
+                stream.stop_stream()
+                stream.close()
+                p.terminate()
         except Exception as e:
-            print(f"Error in SRT stream: {e}")
-            process.terminate()
-            process.wait()
+            print(f"Error during SRT stream: {e}")
+            process_playback.terminate()
+            if save_audio:
+                save_process.terminate()
+            if playback:
+                stream.stop_stream()
+                stream.close()
+                p.terminate()
 
     def setup_plots(self):
         """
@@ -452,7 +529,7 @@ class AudioVisualizer:
             elif source_choice == '2':
                 print("Selected SRT audio stream via FFmpeg.")
                 # Prompt for SRT details if selected
-                input_srt = input("Enter the SRT stream URL (e.g., 'srt://128.171.120.197:5000?mode=caller'): ").strip()
+                input_srt = input("Enter the SRT stream URL (e.g., 'srt://128.171.120.197:8000?mode=caller'): ").strip()
                 output_file = input("Enter the file path to save the recording (e.g., 'recorded_audio.wav'): ").strip()
             else:
                 print("Invalid choice for audio source. Exiting.")
