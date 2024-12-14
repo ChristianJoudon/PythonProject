@@ -76,7 +76,7 @@ class AudioVisualizer:
         input_srt_with_params = urlunparse(url_parts._replace(query=urlencode(query_params, doseq=True)))
 
         # FFmpeg command for streaming
-        ffmpeg_command = f'ffmpeg -i "{input_srt_with_params}" -c:a pcm_s16le -f s16le pipe:1'
+        ffmpeg_command = f'ffmpeg -re -i "{input_srt_with_params}" -c:a pcm_s16le -f s16le -buffer_size 131072 -'
 
         try:
             # Start the FFmpeg process to read raw PCM audio
