@@ -54,16 +54,31 @@ class AudioVisualizer:
         # Sample counter for generating continuous timestamps
         self.sample_counter = 0  # Initialize sample counter
 
+        # Initialize self.fig to None. It will remain None if setup_plots() is never called.
+        self.fig = None
+
+        self.raw_audio_queue = queue.Queue()
+
+
     def stream_and_save_srt(self, input_srt, output_file, save_audio=True, visualize=True, playback=True):
         """
-        Stream SRT audio, save to a file, play through speakers, and visualize audio.
+        Stream SRT audio, save to a file, optionally visualize, and optionally play through speakers.
 
         Parameters:
-        - input_srt (str): The SRT stream URL (e.g., 'srt://128.171.120.197:8000?mode=caller').
+        - input_srt (str): The SRT stream URL (e.g., 'srt://128.171.120.197:8000?mode=caller')
         - output_file (str): Path to save the audio file.
         - save_audio (bool): Whether to save the audio to a file.
         - visualize (bool): Whether to visualize the audio stream.
         - playback (bool): Whether to play the audio through speakers.
+
+        This function:
+        - Connects to the SRT source using FFmpeg.
+        - Reads raw PCM data and processes it according to the chosen options.
+        - If save_audio is True, it writes the incoming audio to a WAV file.
+        - If playback is True, it plays the audio live through the system's speakers.
+        - If visualize is True (and user has selected visualizations), it updates real-time waveform, FFT, and/or spectrogram plots.
+        - Utilizes queues and callback mechanisms for thread-safe and smooth visual updates.
+        - Logs FFmpeg stderr output for debugging purposes.
         """
 
         # Parse and update the SRT URL with required parameters
@@ -75,11 +90,11 @@ class AudioVisualizer:
                 query_params[param] = [default_value]
         input_srt_with_params = urlunparse(url_parts._replace(query=urlencode(query_params, doseq=True)))
 
-        # FFmpeg command for streaming
+        # FFmpeg command for streaming SRT audio and outputting as raw PCM
         ffmpeg_command = f'ffmpeg -re -i "{input_srt_with_params}" -c:a pcm_s16le -f s16le -buffer_size 131072 -'
 
         try:
-            # Start the FFmpeg process to read raw PCM audio
+            # Start FFmpeg process
             process = subprocess.Popen(
                 ffmpeg_command,
                 shell=True,
@@ -88,59 +103,69 @@ class AudioVisualizer:
                 bufsize=10 ** 8
             )
 
-            # Open file for saving the raw audio
+            # Open WAV file for saving audio if chosen by the user
             if save_audio:
                 wav_file = wave.open(output_file, 'wb')
                 wav_file.setnchannels(1)
-                wav_file.setsampwidth(2)  # 16-bit audio = 2 bytes
+                wav_file.setsampwidth(2)   # 16-bit samples => 2 bytes
                 wav_file.setframerate(44100)
 
-            # Setup PyAudio for playback
+            # Setup PyAudio for playback if chosen by the user
             if playback:
                 p = pyaudio.PyAudio()
                 stream = p.open(
                     format=pyaudio.paInt16,
                     channels=1,
-                    rate=44100,  # Set this to the SRT stream's sample rate
+                    rate=44100,  # This sample rate should match the SRT stream or default to 44100 if unknown
                     output=True
                 )
 
             def read_ffmpeg_stderr(pipe):
-                """Log FFmpeg stderr."""
+                """
+                Continuously read from FFmpeg's stderr and print it for logging and debugging purposes.
+
+                This thread ensures any warning, error, or progress messages from FFmpeg are not lost.
+                """
                 while True:
                     line = pipe.readline()
                     if not line:
                         break
                     print(f"FFmpeg stderr: {line.decode('utf-8')}", end='')
 
-            # Start a thread to monitor FFmpeg's stderr
+            # Start a separate thread to handle FFmpeg stderr output
             stderr_thread = threading.Thread(target=read_ffmpeg_stderr, args=(process.stderr,))
             stderr_thread.daemon = True
             stderr_thread.start()
 
+            # Main loop: read PCM data from FFmpeg and handle as chosen
             while self.running:
-                # Read a chunk of audio data from the FFmpeg process
-                raw_audio = process.stdout.read(self.FFT_WINDOW_SIZE * 2)  # 16-bit PCM, 2 bytes per sample
+                # Each read will attempt to get FFT_WINDOW_SIZE samples * 2 bytes each
+                # If visualize is False, FFT_WINDOW_SIZE might not be strictly required,
+                # but we keep it consistent for potential visualization toggling.
+                raw_audio = process.stdout.read(self.FFT_WINDOW_SIZE * 2)
+
+                # If no data is received, break the loop
                 if not raw_audio:
                     print("No audio data received. Exiting.")
                     break
 
-                # Save audio
+                # If save_audio is True, write to WAV file
                 if save_audio:
                     wav_file.writeframes(raw_audio)
 
-                # Playback audio
+                # If playback is True, play through the speakers
                 if playback:
                     stream.write(raw_audio)
 
-                # Process audio for visualization
+                # If visualize is True, attempt to process and update plots
+                # (Only if user selected certain visualizations in the main method)
                 if visualize:
                     try:
-                        # Convert raw byte data to a NumPy array for visualization
-                        audio_data = np.frombuffer(raw_audio, dtype=np.int16).astype(np.float32) / np.iinfo(
-                            np.int16).max
-                        # Pass it to the audio callback
+                        # Convert raw bytes to a normalized NumPy array for analysis
+                        audio_data = np.frombuffer(raw_audio, dtype=np.int16).astype(np.float32) / np.iinfo(np.int16).max
                         self.audio_callback(audio_data.reshape(-1, 1), len(audio_data), None, None)
+
+                        # Update plots only if corresponding flags (show_waveform, show_fft, show_spectrogram) are True
                         if self.show_waveform:
                             self.update_waveform_plot()
                         if self.show_fft:
@@ -148,11 +173,13 @@ class AudioVisualizer:
                         if self.show_spectrogram:
                             self.update_spectrogram()
 
+                        # Redraw the canvas after updates
                         self.fig.canvas.draw_idle()
                         self.fig.canvas.flush_events()
                     except Exception as e:
                         print(f"Error processing visualization: {e}")
 
+            # Cleanup after streaming ends
             process.stdout.close()
             process.stderr.close()
             process.wait()
@@ -166,7 +193,8 @@ class AudioVisualizer:
                 wav_file.close()
 
         except KeyboardInterrupt:
-            print("Interrupted by user. Stopping...")
+            # Handle user interruption gracefully
+            print("Interrupted by user. Stopping stream...")
             process.terminate()
             if save_audio:
                 wav_file.close()
@@ -175,6 +203,7 @@ class AudioVisualizer:
                 stream.close()
                 p.terminate()
         except Exception as e:
+            # Handle any other exceptions
             print(f"Error during SRT stream: {e}")
             process.terminate()
             if save_audio:
@@ -183,7 +212,6 @@ class AudioVisualizer:
                 stream.stop_stream()
                 stream.close()
                 p.terminate()
-
 
     def setup_plots(self):
         """
@@ -380,73 +408,101 @@ class AudioVisualizer:
 
     def audio_callback(self, indata, frames, time_info, status):
         """
-        Audio callback function for processing incoming audio data.
+        Audio callback function for processing incoming audio data from the microphone or other sources.
+
+        This function is called automatically by the audio library whenever new audio data becomes available.
+        It performs several tasks:
+        1. It extracts the incoming audio data from 'indata'.
+        2. It updates sample counters and calculates timestamps for each sample.
+        3. If waveform visualization is enabled, it places the raw audio samples and their timestamps into a queue
+           so the main thread can update the waveform plot.
+        4. It converts the floating-point audio data to 16-bit integers if audio saving is enabled and places the
+           resulting byte data into a queue to be saved to a file later.
+        5. If FFT or spectrogram visualization is enabled, it processes the audio frame to produce frequency-domain
+           data and places it into appropriate queues for updating those visualizations in the main thread.
 
         Parameters:
-        - indata: Input audio data array.
-        - frames: Number of frames in the buffer.
-        - time_info: Dictionary containing timing information.
-        - status: Status of the stream.
+        - indata: A NumPy array containing the incoming audio samples.
+        - frames: The number of frames of audio data contained in 'indata'.
+        - time_info: A dictionary with timing information for the current audio block.
+        - status: A status object that may contain error or warning messages related to the audio stream.
+
+        Any exceptions raised are caught, and an error message is printed, but the callback will continue
+        to be called for subsequent audio blocks.
         """
         try:
+            # If the audio stream has any warnings or errors, print them out for debugging.
             if status:
-                # Print any stream status messages
                 print("Stream status:", status)
 
-            # Make a copy of the audio data from the first channel
+            # Extract a copy of the audio data from the first (and only) channel.
+            # 'indata' is float32 normalized data, typically in the range [-1.0, 1.0].
             audio_data = indata[:, 0].copy()
 
-            # Save current sample counter for timestamp calculations
+            # Store the current sample counter for timestamp calculations.
             current_sample_counter = self.sample_counter
 
-            # Generate continuous timestamps for the audio data
+            # Generate timestamps for these samples based on the sample rate and the running counter.
             timestamps = (np.arange(len(audio_data)) + current_sample_counter) / self.sample_rate
 
-            # Increment sample counter by the number of frames processed
+            # Update the overall sample counter to reflect the processed samples.
             self.sample_counter += len(audio_data)
 
-            # Put the audio data and timestamps into the waveform queue
+            # If waveform visualization is enabled, put the audio data and timestamps into the waveform queue.
+            # The main thread will use these to update the waveform plot.
             if self.show_waveform:
                 self.audio_queue.put((audio_data, timestamps))
 
-            # Process FFT and spectrogram data
+            # Convert floating-point audio_data (range approx. [-1, 1]) to 16-bit integers (range [-32768, 32767]).
+            # This is necessary if we need to save the audio as a standard PCM WAV file, which uses int16 samples.
+            audio_data_int16 = (audio_data * np.iinfo(np.int16).max).astype(np.int16)
+
+            # If the code is configured to save audio, place the raw 16-bit samples (as bytes) into a raw audio queue.
+            # Another part of the code can write these bytes to a WAV file.
+            if hasattr(self, 'save_audio') and self.save_audio:
+                # Push the int16 byte data into the raw_audio_queue for saving.
+                self.raw_audio_queue.put(audio_data_int16.tobytes())
+
+            # If FFT or spectrogram visualization is enabled, we need frequency-domain data.
             if self.show_fft or self.show_spectrogram:
-                # Ensure audio data length matches FFT window size
+                # Ensure the audio data matches the FFT window size.
+                # If it's too short, pad it with zeros. If it's longer, truncate it.
                 if len(audio_data) < self.FFT_WINDOW_SIZE:
-                    # Pad zeros to match FFT window size
-                    audio_data_padded = np.pad(
-                        audio_data,
-                        (0, self.FFT_WINDOW_SIZE - len(audio_data)),
-                        'constant'
-                    )
-                    # Since we padded zeros, adjust the sample counter accordingly
+                    # Pad with zeros to match the window size.
+                    audio_data_padded = np.pad(audio_data, (0, self.FFT_WINDOW_SIZE - len(audio_data)), 'constant')
+                    # The FFT "center" time is adjusted because we added padding.
                     fft_sample_counter = current_sample_counter + len(audio_data_padded) // 2
                 else:
+                    # If we have enough samples, just use the first FFT_WINDOW_SIZE samples.
                     audio_data_padded = audio_data[:self.FFT_WINDOW_SIZE]
                     fft_sample_counter = current_sample_counter + len(audio_data_padded) // 2
 
-                # Apply a window function (Hanning window) to reduce spectral leakage
+                # Apply a Hanning window to the audio data to reduce spectral leakage in the FFT.
                 window = np.hanning(len(audio_data_padded))
                 audio_windowed = audio_data_padded * window
 
-                # Compute the one-sided FFT (positive frequencies only)
+                # Compute the FFT (one-sided, since the audio is real-valued).
                 yf = np.abs(np.fft.rfft(audio_windowed))
-                # Compute frequencies if not already done
+
+                # If frequencies are not yet determined, compute them once based on the sample rate and FFT size.
                 if self.frequencies is None:
                     self.frequencies = np.fft.rfftfreq(self.FFT_WINDOW_SIZE, d=1 / self.sample_rate)
 
-                # Current time for spectrogram and FFT plots
+                # Compute the time (in seconds) at which this FFT "represents."
                 fft_time = fft_sample_counter / self.sample_rate
 
-                # Put the FFT magnitude data into the FFT queue
+                # If FFT visualization is enabled, enqueue the FFT magnitude data for the main thread to plot.
                 if self.show_fft:
                     self.fft_queue.put(yf)
 
-                # Put the spectrogram data into the spectrogram queue
+                # If spectrogram visualization is enabled, enqueue the FFT data and timestamp for spectrogram plotting.
                 if self.show_spectrogram:
                     self.spectrogram_queue.put((yf, fft_time))
+
         except Exception as e:
+            # If any error occurs during processing, print it out.
             print(f"Error in audio_callback: {e}")
+
 
     def start_live_audio_stream(self):
         """
@@ -481,19 +537,28 @@ class AudioVisualizer:
         # Initialize sample counter
         self.sample_counter = 0
 
-        self.running = True  # Set running flag to True to start the loop
+        # *** NEW CODE STARTS HERE ***
+        # If we want to save audio and have a valid output_file, open the WAV file
+        wav_file = None
+        if hasattr(self, 'save_audio') and self.save_audio and hasattr(self, 'output_file') and self.output_file:
+            import wave
+            wav_file = wave.open(self.output_file, 'wb')
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)  # 16-bit audio
+            wav_file.setframerate(self.sample_rate)
+
+        self.running = True
 
         try:
-            # Start the audio input stream
             with sd.InputStream(
                     channels=1,
                     callback=self.audio_callback,
                     samplerate=self.sample_rate,
                     dtype='float32',
-                    blocksize=int(self.sample_rate * 0.05)  # 50ms chunks for smoother updates
+                    blocksize=int(self.sample_rate * 0.05)
             ):
                 while self.running:
-                    # Update visualizations as per user selection
+                    # Update visualizations if chosen
                     if self.show_waveform:
                         self.update_waveform_plot()
                     if self.show_fft:
@@ -501,51 +566,159 @@ class AudioVisualizer:
                     if self.show_spectrogram:
                         self.update_spectrogram()
 
-                    # Redraw the figure canvas to reflect updates
-                    self.fig.canvas.draw_idle()
-                    self.fig.canvas.flush_events()
-                    # Sleep briefly to yield control and allow GUI to update
-                    plt.pause(0.001)  # Use plt.pause to allow GUI event loop to process
+                    # NEW CODE:
+                    # Always write out any raw audio data if wav_file is open
+                    if wav_file is not None:
+                        while not self.raw_audio_queue.empty():
+                            raw_data = self.raw_audio_queue.get_nowait()
+                            wav_file.writeframes(raw_data)
+
+                    if self.fig is not None:
+                        self.fig.canvas.draw_idle()
+                        self.fig.canvas.flush_events()
+                        plt.pause(0.001)
+
         except Exception as e:
-            # Handle any exceptions during streaming
             print(f"An error occurred during streaming: {e}")
-            self.running = False  # Stop the loop in case of error
+            self.running = False
+        finally:
+            # Close the wav_file if opened
+            if wav_file is not None:
+                wav_file.close()
+
 
     def main(self):
         """
         Main function to start the audio visualizer.
+
+        Changes Made:
+        - Now, for both audio sources (microphone or SRT), the user is asked to select an operation mode:
+          1. Just record (no visualization, no playback)
+          2. Listen and visualize only (no recording)
+        - This ensures that save_audio, visualize, and playback are always defined.
+        - Visualization options and related prompts are only asked if 'visualize' is True.
+        - Frequency and time window selections are always prompted for consistency, though they only matter if visualizing.
+
+        The goal is to keep the code flexible, user-friendly, and professional, with verbose comments.
         """
+
         try:
-            # Prompt user for audio source
+            # Prompt the user for the audio source
             print("Choose audio source:")
             print("1. Live audio from microphone")
             print("2. SRT audio stream via FFmpeg")
             source_choice = input("Enter '1' for live audio or '2' for SRT stream: ").strip()
 
-            # Confirm and set audio source
             if source_choice == '1':
+                # Selected live audio from microphone
                 print("Selected live audio stream from microphone.")
+                input_srt = None
+                output_file = None
+
+                # Prompt the user for the operation mode:
+                # 1. Just record (no visualization, no playback)
+                # 2. Listen and visualize only (no recording)
+                print("Choose operation mode:")
+                print("1. Just record (no visualization, no playback)")
+                print("2. Listen and visualize only (no recording)")
+                mode_choice = input("Enter '1' or '2': ").strip()
+
+                if mode_choice == '1':
+                    save_audio = True
+                    visualize = False
+                    playback = False
+                    output_file = input(
+                        "Enter the file path to save the microphone recording (e.g., 'mic_recorded_audio.wav'): ").strip()
+                    # NEW LINES:
+                    self.save_audio = save_audio
+                    self.output_file = output_file
+
+                elif mode_choice == '2':
+                    save_audio = False
+                    visualize = True
+                    playback = True
+                    # Even if we are not saving here, assign save_audio for consistency
+                    self.save_audio = save_audio
+                    self.output_file = None  # No output file needed for listen/visualize only
+                else:
+                    print("Invalid choice. Defaulting to just record mode.")
+                    save_audio = True
+                    visualize = False
+                    playback = False
+                    output_file = input(
+                        "Enter the file path to save the microphone recording (e.g., 'mic_recorded_audio.wav'): ").strip()
+                    # NEW LINES:
+                    self.save_audio = save_audio
+                    self.output_file = output_file
+
+
             elif source_choice == '2':
+                # Selected SRT audio stream
                 print("Selected SRT audio stream via FFmpeg.")
-                # Prompt for SRT details if selected
-                input_srt = input("Enter the SRT stream URL (e.g., 'srt://128.171.120.197:8000?mode=caller'): ").strip()
+                # Prompt for SRT details
+                input_srt = input("Enter the SRT stream URL (e.g., 'srt://127.0.0.1:8000?mode=caller'): ").strip()
                 output_file = input("Enter the file path to save the recording (e.g., 'recorded_audio.wav'): ").strip()
+                self.output_file = output_file
+
+                # Prompt the user for the operation mode for SRT
+                print("Choose operation mode:")
+                print("1. Just record (no visualization, no playback)")
+                print("2. Listen and visualize only (no recording)")
+                mode_choice = input("Enter '1' or '2': ").strip()
+
+                # Prompt user for mode choice
+                if mode_choice == '1':
+                    save_audio = True
+                    visualize = False
+                    playback = False
+                    output_file = input(
+                        "Enter the file path to save the microphone recording (e.g., 'mic_recorded_audio.wav'): ").strip()
+                    # NEW LINES:
+                    self.save_audio = save_audio
+                    self.output_file = output_file
+                elif mode_choice == '2':
+                    save_audio = False
+                    visualize = True
+                    playback = True
+                    # NEW LINES:
+                    self.save_audio = save_audio
+                    # self.output_file is already set above
+                else:
+                    print("Invalid choice. Defaulting to just record mode.")
+                    save_audio = True
+                    visualize = False
+                    playback = False
+                    output_file = input(
+                        "Enter the file path to save the microphone recording (e.g., 'mic_recorded_audio.wav'): ").strip()
+                    # NEW LINES:
+                    self.save_audio = save_audio
+                    self.output_file = output_file
+
             else:
                 print("Invalid choice for audio source. Exiting.")
                 return
 
-            # Prompt user for visualizations to display
-            print("Choose visualizations to display:")
-            self.show_waveform = input("Show waveform? (y/n): ").strip().lower() == 'y'
-            self.show_fft = input("Show FFT? (y/n): ").strip().lower() == 'y'
-            self.show_spectrogram = input("Show spectrogram? (y/n): ").strip().lower() == 'y'
+            # If visualize is True, we prompt for visualization details and range/time settings.
+            # If visualize is False, we skip the visualization prompts.
+            if visualize:
+                # Prompt user for visualizations to display
+                print("Choose visualizations to display:")
+                self.show_waveform = input("Show waveform? (y/n): ").strip().lower() == 'y'
+                self.show_fft = input("Show FFT? (y/n): ").strip().lower() == 'y'
+                self.show_spectrogram = input("Show spectrogram? (y/n): ").strip().lower() == 'y'
 
-            # Ensure at least one visualization is selected
-            if not any([self.show_waveform, self.show_fft, self.show_spectrogram]):
-                print("No visualizations selected. Exiting.")
-                return
+                # Ensure at least one visualization is selected if visualize is True
+                if not any([self.show_waveform, self.show_fft, self.show_spectrogram]):
+                    print("No visualizations selected. Exiting.")
+                    return
+            else:
+                # If not visualizing, ensure all visualization flags are False
+                self.show_waveform = False
+                self.show_fft = False
+                self.show_spectrogram = False
 
-            # Prompt user for frequency range
+            # Prompt user for frequency range (only matters if visualizing FFT or spectrogram,
+            # but we'll keep it consistent)
             print("Please select the frequency range for visualization (Spectrogram and FFT):")
             print("1. 0-20,000 Hz (default)")
             print("2. 0-5,000 Hz")
@@ -568,7 +741,7 @@ class AudioVisualizer:
                 self.MIN_FREQ, self.MAX_FREQ = 0, 20000
             print(f"Frequency range set to {self.MIN_FREQ}-{self.MAX_FREQ} Hz.")
 
-            # Prompt user for time window
+            # Prompt user for time window (again, mainly matters if visualize=True, but we keep consistent)
             print("Select the time window (in seconds) for visualization:")
             print("1. 3 seconds")
             print("2. 5 seconds")
@@ -589,26 +762,45 @@ class AudioVisualizer:
                 self.TIME_WINDOW = 5
             print(f"Time window set to {self.TIME_WINDOW} seconds.")
 
-            # Set up the plots based on selected visualizations
-            self.setup_plots()
+            # If we have chosen any visualization at all, set up the plots
+            if any([self.show_waveform, self.show_fft, self.show_spectrogram]):
+                self.setup_plots()
 
+            # Now handle the chosen source
             if source_choice == '1':
-                # Start the live audio stream from microphone
+                # Live audio from microphone
                 print("Starting live audio stream...")
+                # For microphone mode, the logic of streaming is unchanged.
+                # save_audio, visualize, playback are defined.
+                # If visualize=True, the plots are set up already.
+                # If just record mode was chosen, visualization and playback are False, so it will just record.
+                # However, for live mic, we currently do not have a "just record" functionality implemented in the code.
+                # The original code didn't record microphone input to file. If you need that, you'd have to implement it.
+                # For now, just run the visual streaming (if visualize is True), or do nothing extra if visualize is False.
+                # Playback is also not implemented for live input in the original code.
+                # We respect user's request not to remove functionalities.
+                # If you need just record for microphone, you'd have to add that logic.
+                # Since the user only mentioned apply mode selection to SRT, we won't alter mic logic drastically.
+
+                # If visualize=True, it will show visualization. If visualize=False, it will just run and do nothing visible.
+                # If you want to handle 'just record' from microphone, you'd need to add code to record mic input.
+                # That was not previously implemented, so we leave it as is.
+
                 self.start_live_audio_stream()
+
             elif source_choice == '2':
-                # Dynamically determine the sample rate (needed before streaming)
+                # SRT Stream
                 if self.sample_rate is None:
                     try:
-                        self.sample_rate = 44100  # Set a default sample rate or retrieve from stream
+                        self.sample_rate = 44100
                         print(f"Using sample rate: {self.sample_rate} Hz")
                     except Exception as e:
                         print(f"Error setting sample rate: {e}")
                         return
 
-                # Adjust FFT_WINDOW_SIZE for desired resolution
-                self.FFT_WINDOW_SIZE = int(self.sample_rate * 0.1)  # For a 100ms window
-                # Ensure FFT_WINDOW_SIZE is a power of two
+                # Set FFT window size for analysis
+                self.FFT_WINDOW_SIZE = int(self.sample_rate * 0.1)  # For about 100ms window
+                # Ensure FFT_WINDOW_SIZE is a power of two, which is optimal for FFT calculations
                 self.FFT_WINDOW_SIZE = 2 ** int(np.log2(self.FFT_WINDOW_SIZE))
                 print(f"FFT window size: {self.FFT_WINDOW_SIZE} samples")
 
@@ -616,24 +808,27 @@ class AudioVisualizer:
                 maxlen = int(self.TIME_WINDOW * self.sample_rate)
                 self.waveform_data = deque(maxlen=maxlen)
                 self.waveform_time = deque(maxlen=maxlen)
-                self.time_data = []           # Timestamps for spectrogram
-                self.spectrogram_data = []    # FFT data for spectrogram
+                self.time_data = []  # Timestamps for spectrogram
+                self.spectrogram_data = []  # FFT data for spectrogram
 
-                # Initialize sample counter
+                # Reset sample counter
                 self.sample_counter = 0
 
-                # Start streaming and visualizing SRT audio
-                print("Starting SRT streaming and visualization...")
+                print("Starting SRT streaming with the chosen configuration...")
                 self.running = True
-                self.stream_and_save_srt(input_srt, output_file)
+                # Use the user's chosen mode configuration: save_audio, visualize, playback
+                self.stream_and_save_srt(input_srt, output_file, save_audio=save_audio, visualize=visualize,
+                                         playback=playback)
+
         except KeyboardInterrupt:
-            # Handle user interruption gracefully
+            # Graceful interruption by user
             print("Interrupted by user.")
             self.running = False
         except Exception as e:
-            # Handle any other exceptions
+            # Any other exceptions are caught here
             print("An error occurred:", e)
             self.running = False
+
 
 # Run the AudioVisualizer if this script is executed directly
 if __name__ == "__main__":

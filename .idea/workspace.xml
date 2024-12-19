@@ -7,9 +7,6 @@
     <list default="true" id="14ada745-e614-4130-83dd-7c6a5acdc10c" name="Changes" comment="Commit">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/PiAudioViz.py" beforeDir="false" afterPath="$PROJECT_DIR$/PiAudioViz.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/ReefAudio.py" beforeDir="false" afterPath="$PROJECT_DIR$/ReefAudio.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/recorded_audio1.wav" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/recorded_audio2.wav" beforeDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -26,23 +23,23 @@
   <component name="Git.Settings">
     <option name="RECENT_BRANCH_BY_REPOSITORY">
       <map>
-        <entry key="$PROJECT_DIR$" value="FFMPEG-Change-3" />
+        <entry key="$PROJECT_DIR$" value="This-could-go-wrong" />
       </map>
     </option>
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
-  <component name="GitHubPullRequestSearchHistory"><![CDATA[{
-  "lastFilter": {
-    "state": "OPEN",
-    "assignee": "ChristianJoudon"
+  <component name="GitHubPullRequestSearchHistory">{
+  &quot;lastFilter&quot;: {
+    &quot;state&quot;: &quot;OPEN&quot;,
+    &quot;assignee&quot;: &quot;ChristianJoudon&quot;
   }
-}]]></component>
-  <component name="GithubPullRequestsUISettings"><![CDATA[{
-  "selectedUrlAndAccountId": {
-    "url": "https://ChristianJoudon@github.com/ChristianJoudon/PythonProject.git",
-    "accountId": "fb549e4a-9c77-4182-b78f-fb430c188566"
+}</component>
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;https://ChristianJoudon@github.com/ChristianJoudon/PythonProject.git&quot;,
+    &quot;accountId&quot;: &quot;fb549e4a-9c77-4182-b78f-fb430c188566&quot;
   }
-}]]></component>
+}</component>
   <component name="ProjectColorInfo">{
   &quot;associatedIndex&quot;: 0
 }</component>
@@ -58,7 +55,7 @@
     "Python.PiViz.executor": "Run",
     "RunOnceActivity.ShowReadmeOnStart": "true",
     "RunOnceActivity.git.unshallow": "true",
-    "git-widget-placeholder": "This-could-go-wrong",
+    "git-widget-placeholder": "This-could-go-wrong2",
     "node.js.detected.package.eslint": "true",
     "node.js.detected.package.tslint": "true",
     "node.js.selected.package.eslint": "(autodetect)",
@@ -88,6 +85,8 @@
       <workItem from="1732573137520" duration="8153000" />
       <workItem from="1732831984122" duration="26099000" />
       <workItem from="1733357045596" duration="52208000" />
+      <workItem from="1734210312591" duration="5746000" />
+      <workItem from="1734560647248" duration="6572000" />
     </task>
     <task id="LOCAL-00001" summary="Commit">
       <option name="closed" value="true" />
@@ -113,7 +112,15 @@
       <option name="project" value="LOCAL" />
       <updated>1733741845927</updated>
     </task>
-    <option name="localTasksCounter" value="4" />
+    <task id="LOCAL-00004" summary="Commit">
+      <option name="closed" value="true" />
+      <created>1734210339264</created>
+      <option name="number" value="00004" />
+      <option name="presentableId" value="LOCAL-00004" />
+      <option name="project" value="LOCAL" />
+      <updated>1734210339264</updated>
+    </task>
+    <option name="localTasksCounter" value="5" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -135,7 +142,7 @@
     <option name="LAST_COMMIT_MESSAGE" value="Commit" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
-    <SUITE FILE_PATH="coverage/CapstoneProject$PiAudioViz.coverage" NAME="PiAudioViz Coverage Results" MODIFIED="1733789647993" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/CapstoneProject$PiAudioViz.coverage" NAME="PiAudioViz Coverage Results" MODIFIED="1734570228309" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/PythonProject$PiViz.coverage" NAME="PiViz Coverage Results" MODIFIED="1732572611198" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/PythonProject$PiAudioViz.coverage" NAME="PiAudioViz Coverage Results" MODIFIED="1733173286118" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
   </component>
