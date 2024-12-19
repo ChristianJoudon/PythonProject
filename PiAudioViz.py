@@ -613,7 +613,6 @@ class AudioVisualizer:
                 # Selected live audio from microphone
                 print("Selected live audio stream from microphone.")
                 input_srt = None
-                output_file = None
 
                 # Prompt the user for the operation mode:
                 # 1. Just record (no visualization, no playback)
@@ -624,73 +623,71 @@ class AudioVisualizer:
                 mode_choice = input("Enter '1' or '2': ").strip()
 
                 if mode_choice == '1':
+                    # Just record means save_audio = True, no visualization, no playback
                     save_audio = True
                     visualize = False
                     playback = False
+                    # Prompt for output file name now, after choosing mode
                     output_file = input(
                         "Enter the file path to save the microphone recording (e.g., 'mic_recorded_audio.wav'): ").strip()
-                    # NEW LINES:
                     self.save_audio = save_audio
                     self.output_file = output_file
 
                 elif mode_choice == '2':
+                    # Listen and visualize only means no saving, but visualize and playback
                     save_audio = False
                     visualize = True
                     playback = True
-                    # Even if we are not saving here, assign save_audio for consistency
                     self.save_audio = save_audio
-                    self.output_file = None  # No output file needed for listen/visualize only
+                    self.output_file = None  # No output file needed
                 else:
                     print("Invalid choice. Defaulting to just record mode.")
                     save_audio = True
                     visualize = False
                     playback = False
+                    # Ask for output file name here again since just record mode
                     output_file = input(
                         "Enter the file path to save the microphone recording (e.g., 'mic_recorded_audio.wav'): ").strip()
-                    # NEW LINES:
                     self.save_audio = save_audio
                     self.output_file = output_file
-
 
             elif source_choice == '2':
                 # Selected SRT audio stream
                 print("Selected SRT audio stream via FFmpeg.")
                 # Prompt for SRT details
-                input_srt = input("Enter the SRT stream URL (e.g., 'srt://127.0.0.1:8000?mode=caller'): ").strip()
-                output_file = input("Enter the file path to save the recording (e.g., 'recorded_audio.wav'): ").strip()
-                self.output_file = output_file
+                input_srt = input("Enter the SRT stream URL (e.g., 'srt://66.91.131.18:5000?mode=caller'): ").strip()
 
+                # Do NOT ask for file name here. Wait until user chooses mode.
                 # Prompt the user for the operation mode for SRT
                 print("Choose operation mode:")
                 print("1. Just record (no visualization, no playback)")
                 print("2. Listen and visualize only (no recording)")
                 mode_choice = input("Enter '1' or '2': ").strip()
 
-                # Prompt user for mode choice
                 if mode_choice == '1':
                     save_audio = True
                     visualize = False
                     playback = False
+                    # Only now prompt for the output file name since user chose just record
                     output_file = input(
-                        "Enter the file path to save the microphone recording (e.g., 'mic_recorded_audio.wav'): ").strip()
-                    # NEW LINES:
+                        "Enter the file path to save the recording (e.g., 'recorded_audio.wav'): ").strip()
                     self.save_audio = save_audio
                     self.output_file = output_file
+
                 elif mode_choice == '2':
                     save_audio = False
                     visualize = True
                     playback = True
-                    # NEW LINES:
                     self.save_audio = save_audio
-                    # self.output_file is already set above
+                    self.output_file = None  # No file needed since not recording
                 else:
                     print("Invalid choice. Defaulting to just record mode.")
                     save_audio = True
                     visualize = False
                     playback = False
+                    # Prompt for output file after defaulting to just record mode
                     output_file = input(
-                        "Enter the file path to save the microphone recording (e.g., 'mic_recorded_audio.wav'): ").strip()
-                    # NEW LINES:
+                        "Enter the file path to save the recording (e.g., 'recorded_audio.wav'): ").strip()
                     self.save_audio = save_audio
                     self.output_file = output_file
 
@@ -698,8 +695,8 @@ class AudioVisualizer:
                 print("Invalid choice for audio source. Exiting.")
                 return
 
-            # If visualize is True, we prompt for visualization details and range/time settings.
-            # If visualize is False, we skip the visualization prompts.
+            # If we are just recording (no visualization), skip frequency/time window prompts
+            # If visualize == True, then we prompt for visualization details
             if visualize:
                 # Prompt user for visualizations to display
                 print("Choose visualizations to display:")
@@ -711,81 +708,62 @@ class AudioVisualizer:
                 if not any([self.show_waveform, self.show_fft, self.show_spectrogram]):
                     print("No visualizations selected. Exiting.")
                     return
+
+                # Prompt user for frequency range
+                print("Please select the frequency range for visualization (Spectrogram and FFT):")
+                print("1. 0-20,000 Hz (default)")
+                print("2. 0-5,000 Hz")
+                print("3. 0-2,000 Hz")
+                print("4. 0-1,000 Hz")
+                print("5. 0-500 Hz")
+                freq_choice = input("Enter the number of your choice: ").strip()
+
+                freq_options = {
+                    '1': (0, 20000),
+                    '2': (0, 5000),
+                    '3': (0, 2000),
+                    '4': (0, 1000),
+                    '5': (0, 500)
+                }
+                if freq_choice in freq_options:
+                    self.MIN_FREQ, self.MAX_FREQ = freq_options[freq_choice]
+                else:
+                    print("Invalid choice for frequency range. Using default 0-20,000 Hz.")
+                    self.MIN_FREQ, self.MAX_FREQ = 0, 20000
+                print(f"Frequency range set to {self.MIN_FREQ}-{self.MAX_FREQ} Hz.")
+
+                # Prompt user for time window
+                print("Select the time window (in seconds) for visualization:")
+                print("1. 3 seconds")
+                print("2. 5 seconds")
+                print("3. 7 seconds")
+                print("4. 9 seconds")
+                time_window_choice = input("Enter your choice (1-4): ").strip()
+
+                time_window_options = {
+                    '1': 3,
+                    '2': 5,
+                    '3': 7,
+                    '4': 9
+                }
+                if time_window_choice in time_window_options:
+                    self.TIME_WINDOW = time_window_options[time_window_choice]
+                else:
+                    print("Invalid choice. Using default 5 seconds.")
+                    self.TIME_WINDOW = 5
+                print(f"Time window set to {self.TIME_WINDOW} seconds.")
+
+                # If we have chosen any visualization, set up the plots
+                if any([self.show_waveform, self.show_fft, self.show_spectrogram]):
+                    self.setup_plots()
             else:
-                # If not visualizing, ensure all visualization flags are False
-                self.show_waveform = False
-                self.show_fft = False
-                self.show_spectrogram = False
-
-            # Prompt user for frequency range (only matters if visualizing FFT or spectrogram,
-            # but we'll keep it consistent)
-            print("Please select the frequency range for visualization (Spectrogram and FFT):")
-            print("1. 0-20,000 Hz (default)")
-            print("2. 0-5,000 Hz")
-            print("3. 0-2,000 Hz")
-            print("4. 0-1,000 Hz")
-            print("5. 0-500 Hz")
-            freq_choice = input("Enter the number of your choice: ").strip()
-
-            freq_options = {
-                '1': (0, 20000),
-                '2': (0, 5000),
-                '3': (0, 2000),
-                '4': (0, 1000),
-                '5': (0, 500)
-            }
-            if freq_choice in freq_options:
-                self.MIN_FREQ, self.MAX_FREQ = freq_options[freq_choice]
-            else:
-                print("Invalid choice for frequency range. Using default 0-20,000 Hz.")
-                self.MIN_FREQ, self.MAX_FREQ = 0, 20000
-            print(f"Frequency range set to {self.MIN_FREQ}-{self.MAX_FREQ} Hz.")
-
-            # Prompt user for time window (again, mainly matters if visualize=True, but we keep consistent)
-            print("Select the time window (in seconds) for visualization:")
-            print("1. 3 seconds")
-            print("2. 5 seconds")
-            print("3. 7 seconds")
-            print("4. 9 seconds")
-            time_window_choice = input("Enter your choice (1-4): ").strip()
-
-            time_window_options = {
-                '1': 3,
-                '2': 5,
-                '3': 7,
-                '4': 9
-            }
-            if time_window_choice in time_window_options:
-                self.TIME_WINDOW = time_window_options[time_window_choice]
-            else:
-                print("Invalid choice. Using default 5 seconds.")
-                self.TIME_WINDOW = 5
-            print(f"Time window set to {self.TIME_WINDOW} seconds.")
-
-            # If we have chosen any visualization at all, set up the plots
-            if any([self.show_waveform, self.show_fft, self.show_spectrogram]):
-                self.setup_plots()
+                # If visualize is False, ensure all visualization flags are False (already done)
+                pass
 
             # Now handle the chosen source
             if source_choice == '1':
                 # Live audio from microphone
                 print("Starting live audio stream...")
-                # For microphone mode, the logic of streaming is unchanged.
-                # save_audio, visualize, playback are defined.
-                # If visualize=True, the plots are set up already.
-                # If just record mode was chosen, visualization and playback are False, so it will just record.
-                # However, for live mic, we currently do not have a "just record" functionality implemented in the code.
-                # The original code didn't record microphone input to file. If you need that, you'd have to implement it.
-                # For now, just run the visual streaming (if visualize is True), or do nothing extra if visualize is False.
-                # Playback is also not implemented for live input in the original code.
-                # We respect user's request not to remove functionalities.
-                # If you need just record for microphone, you'd have to add that logic.
-                # Since the user only mentioned apply mode selection to SRT, we won't alter mic logic drastically.
-
-                # If visualize=True, it will show visualization. If visualize=False, it will just run and do nothing visible.
-                # If you want to handle 'just record' from microphone, you'd need to add code to record mic input.
-                # That was not previously implemented, so we leave it as is.
-
                 self.start_live_audio_stream()
 
             elif source_choice == '2':
@@ -798,26 +776,22 @@ class AudioVisualizer:
                         print(f"Error setting sample rate: {e}")
                         return
 
-                # Set FFT window size for analysis
-                self.FFT_WINDOW_SIZE = int(self.sample_rate * 0.1)  # For about 100ms window
-                # Ensure FFT_WINDOW_SIZE is a power of two, which is optimal for FFT calculations
+                # Set FFT window size for analysis (harmless even if visualize=False)
+                self.FFT_WINDOW_SIZE = int(self.sample_rate * 0.1)
                 self.FFT_WINDOW_SIZE = 2 ** int(np.log2(self.FFT_WINDOW_SIZE))
                 print(f"FFT window size: {self.FFT_WINDOW_SIZE} samples")
 
-                # Initialize buffers for waveform and spectrogram data
+                # Initialize buffers
                 maxlen = int(self.TIME_WINDOW * self.sample_rate)
                 self.waveform_data = deque(maxlen=maxlen)
                 self.waveform_time = deque(maxlen=maxlen)
-                self.time_data = []  # Timestamps for spectrogram
-                self.spectrogram_data = []  # FFT data for spectrogram
-
-                # Reset sample counter
+                self.time_data = []
+                self.spectrogram_data = []
                 self.sample_counter = 0
 
                 print("Starting SRT streaming with the chosen configuration...")
                 self.running = True
-                # Use the user's chosen mode configuration: save_audio, visualize, playback
-                self.stream_and_save_srt(input_srt, output_file, save_audio=save_audio, visualize=visualize,
+                self.stream_and_save_srt(input_srt, self.output_file, save_audio=save_audio, visualize=visualize,
                                          playback=playback)
 
         except KeyboardInterrupt:
